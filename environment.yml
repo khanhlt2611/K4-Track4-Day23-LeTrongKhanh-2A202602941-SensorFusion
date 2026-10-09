@@ -3,6 +3,10 @@ channels:
   - conda-forge
 dependencies:
   - python=3.12
+  # Keep NumPy BLAS separate from the OpenMP runtime bundled with pip PyTorch.
+  - libblas=*=*openblas
+  - libcblas=*=*openblas
+  - liblapack=*=*openblas
   - numpy
   - scipy
   - matplotlib

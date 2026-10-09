@@ -13,7 +13,7 @@ import numpy as np
 
 Matrix = np.matrix | np.ndarray
 
-# vi: Gợi ý module — params = get_tracking_params() sau khi import ở trên.
+from fusion_lab.workspace_support import get_tracking_params
 
 
 def build_F(dt: Optional[float] = None) -> Matrix:
@@ -25,9 +25,11 @@ def build_F(dt: Optional[float] = None) -> Matrix:
     Returns:
         6x6 state transition matrix as ``np.matrix``.
     """
-    # vi: TODO Part E — Nếu dt is None, lấy params.dt từ get_tracking_params().
-    # vi: F = I_6; gán F[0,3]=F[1,4]=F[2,5]=dt (vị trí += v * dt).
-    raise NotImplementedError("TODO: implement build_F")
+    params = get_tracking_params()
+    step = params.dt if dt is None else dt
+    transition = np.eye(params.dim_state, dtype=float)
+    transition[:3, 3:6] = np.eye(3) * step
+    return np.asmatrix(transition)
 
 
 def build_Q(dt: Optional[float] = None, q: Optional[float] = None) -> Matrix:
@@ -40,8 +42,11 @@ def build_Q(dt: Optional[float] = None, q: Optional[float] = None) -> Matrix:
     Returns:
         6x6 process noise matrix.
     """
-    # vi: TODO Part E — Q đường chéo: q_diag = dt * q trên 6 trục (mô hình lab).
-    raise NotImplementedError("TODO: implement build_Q")
+    params = get_tracking_params()
+    step = params.dt if dt is None else dt
+    scale = params.q if q is None else q
+    # The lab uses diagonal process noise rather than an acceleration model.
+    return np.asmatrix(np.eye(params.dim_state) * step * scale)
 
 
 def ekf_predict(
@@ -61,8 +66,13 @@ def ekf_predict(
     Returns:
         Tuple ``(x_pred, P_pred)``.
     """
-    # vi: TODO Part E — x_pred = F @ x; P_pred = F @ P @ F.T + Q (dùng ma trận np).
-    raise NotImplementedError("TODO: implement ekf_predict")
+    transition = np.asarray(build_F() if F is None else F, dtype=float)
+    noise = np.asarray(build_Q() if Q is None else Q, dtype=float)
+    state = np.asarray(x, dtype=float).reshape(-1, 1)
+    covariance = np.asarray(P, dtype=float)
+    predicted = transition @ state
+    predicted_covariance = transition @ covariance @ transition.T + noise
+    return np.asmatrix(predicted), np.asmatrix(predicted_covariance)
 
 
 def innovation(x: Matrix, meas: Any) -> Matrix:
@@ -75,8 +85,9 @@ def innovation(x: Matrix, meas: Any) -> Matrix:
     Returns:
         Innovation vector ``z - h(x)``.
     """
-    # vi: TODO Part E — return meas.z - meas.sensor.get_hx(x).
-    raise NotImplementedError("TODO: implement innovation")
+    observed = np.asarray(meas.z, dtype=float).reshape(-1, 1)
+    predicted = np.asarray(meas.sensor.get_hx(x), dtype=float).reshape(-1, 1)
+    return np.asmatrix(observed - predicted)
 
 
 def innovation_covariance(P: Matrix, meas: Any, H: Matrix) -> Matrix:
@@ -90,8 +101,10 @@ def innovation_covariance(P: Matrix, meas: Any, H: Matrix) -> Matrix:
     Returns:
         Innovation covariance matrix S.
     """
-    # vi: TODO Part E — S = H @ P @ H.T + meas.R (dùng @ với cả ndarray/matrix).
-    raise NotImplementedError("TODO: implement innovation_covariance")
+    jacobian = np.asarray(H, dtype=float)
+    covariance = np.asarray(P, dtype=float)
+    noise = np.asarray(meas.R, dtype=float)
+    return np.asmatrix(jacobian @ covariance @ jacobian.T + noise)
 
 
 def ekf_update(x: Matrix, P: Matrix, meas: Any) -> tuple[Matrix, Matrix]:
@@ -105,6 +118,16 @@ def ekf_update(x: Matrix, P: Matrix, meas: Any) -> tuple[Matrix, Matrix]:
     Returns:
         Tuple ``(x_upd, P_upd)``.
     """
-    # vi: TODO Part E — H = meas.sensor.get_H(x); gamma, S; K = P H' S^{-1};
-    # vi: x_upd = x + K gamma; P_upd = (I - K H) P.
-    raise NotImplementedError("TODO: implement ekf_update")
+    state = np.asarray(x, dtype=float).reshape(-1, 1)
+    covariance = np.asarray(P, dtype=float)
+    jacobian = np.asarray(meas.sensor.get_H(x), dtype=float)
+    residual = np.asarray(innovation(x, meas))
+    residual_covariance = np.asarray(innovation_covariance(P, meas, jacobian))
+    cross_covariance = covariance @ jacobian.T
+    # Solve for K rather than explicitly inverting the innovation covariance.
+    gain = np.linalg.solve(residual_covariance.T, cross_covariance.T).T
+    updated = state + gain @ residual
+    updated_covariance = (np.eye(state.shape[0]) - gain @ jacobian) @ covariance
+    # Restore symmetry after floating-point roundoff.
+    updated_covariance = (updated_covariance + updated_covariance.T) / 2.0
+    return np.asmatrix(updated), np.asmatrix(updated_covariance)
